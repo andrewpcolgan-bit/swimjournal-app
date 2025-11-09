@@ -1,37 +1,30 @@
 // api/analyze.js
-import OpenAI from "openai";
+// Free alternative using Google Gemini 1.5 Flash API
+// Make sure to set GEMINI_API_KEY in your Vercel environment variables
 
 export default async function handler(req, res) {
-  // Check that we're receiving a POST request
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  // Load OpenAI key from environment (set in Vercel)
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    return res.status(401).json({ error: "Missing OpenAI API key" });
+    return res.status(401).json({ error: "Missing Gemini API key" });
   }
-
-  const openai = new OpenAI({ apiKey });
 
   try {
     const { text } = req.body;
-
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: "No text provided" });
     }
 
-    // This is the “smart” prompt for workout parsing
     const prompt = `
-You are an expert swim coach and data analyst.
-Analyze the swim workout below. Return **two things**:
-1️⃣ A formatted, human-readable breakdown (with emojis and clear section headers).
-2️⃣ A valid JSON object summarizing totals, following this exact structure:
+You are an expert swim coach and workout analyzer.
+Analyze the following swim workout and return **only** valid JSON
+with this structure:
 
 {
   "totalYards": number,
-  "durationMinutes": number,
   "sectionYards": {
     "Warmup": number,
     "Kick": number,
@@ -52,47 +45,40 @@ Analyze the swim workout below. Return **two things**:
   "aiTip": string
 }
 
-The formatted breakdown should look like:
-🏊‍♂️ Workout Breakdown
-Warmup — 700 yards
-Kick — 1000 yards
-...
-Then include total yardage and percentages summary at the bottom.
-
-Text to analyze:
+Workout:
 ${text}
 `;
 
-    // Send the prompt to OpenAI
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
-      messages: [
-        { role: "system", content: "You are a structured data extractor and swim coach." },
-        { role: "user", content: prompt }
-      ]
-    });
+    // Gemini endpoint
+    const response = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }]
+            }
+          ]
+        })
+      }
+    );
 
-    const message = completion.choices[0]?.message?.content || "";
+    const data = await response.json();
 
-    // Extract JSON block from AI output
-    const jsonMatch = message.match(/\{[\s\S]*\}/);
-    let jsonData = {};
-
+    const output = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    let parsed;
     try {
-      jsonData = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
-    } catch (err) {
-      console.error("JSON parse error:", err);
+      parsed = JSON.parse(output);
+    } catch {
+      parsed = { rawOutput: output };
     }
 
-    // Send everything back to the app
-    res.status(200).json({
-      formattedText: message,
-      ...jsonData
-    });
-
+    res.status(200).json(parsed);
   } catch (error) {
-    console.error("AI Error:", error);
+    console.error("Gemini API Error:", error);
     res.status(500).json({ error: "Server error: " + error.message });
   }
 }
