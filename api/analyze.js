@@ -63,6 +63,20 @@ Also:
 - totalYards = sum of all sections.
 - strokePercentages should estimate proportions of each stroke mentioned in the text.
 - aiTip should be a concise coaching insight (1-3 sentences) summarizing the workout’s focus and what the swimmer should pay attention to.
+- strokePercentages should reflect the proportion of total yardage for each stroke type.
+- Identify strokes by words in the text:
+  * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
+  * Backstroke: "back", "bk"
+  * Breaststroke: "breast", "br"
+  * Butterfly: "fly"
+  * IM: "IM", "individual medley"
+  * Kick: "kick"
+  * Drill: "drill"
+  * Drill/Swim: "drill/swim", "sw/dr"
+  * Pull: "pull", "paddles"
+  * Choice: "choice", "any stroke"
+  * Swim: "swim" - If unclear, assign yardage here
+
 
 Return JSON in this exact structure:
 {
@@ -74,13 +88,17 @@ Return JSON in this exact structure:
     "Cooldown": number
   },
   "strokePercentages": {
-    "Freestyle": number,
-    "Backstroke": number,
-    "Breaststroke": number,
-    "Butterfly": number,
-    "Drill": number,
-    "Kick": number
-  },
+  "Freestyle": number,
+  "Backstroke": number,
+  "Breaststroke": number,
+  "Butterfly": number,
+  "Kick": number,
+  "Drill": number,
+  "Drill/Swim": number,
+  "Pull": number,
+  "Choice": number,
+  "IM": number
+},
   "aiTip": string
 }
 
