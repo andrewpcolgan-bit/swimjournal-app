@@ -20,30 +20,19 @@ export default async function handler(req, res) {
 
     const prompt = `
 You are an expert swim coach and workout analyzer.
-Analyze the following swim workout and return **only** valid JSON
-with this structure:
+Return ONLY valid JSON (no extra words, no markdown).
 
+Analyze this swim workout and reply with:
 {
   "totalYards": number,
-  "sectionYards": {
-    "Warmup": number,
-    "Kick": number,
-    "Drill": number,
-    "Main Set": number,
-    "Pull": number,
-    "Sprint Finisher": number,
-    "Cool Down": number
-  },
-  "strokePercentages": {
-    "Freestyle": number,
-    "Backstroke": number,
-    "Breaststroke": number,
-    "Butterfly": number,
-    "Drill": number,
-    "Kick": number
-  },
+  "sectionYards": {"Warmup": number, "Main Set": number, "Cool Down": number},
+  "strokePercentages": {"Freestyle": number, "Backstroke": number, "Breaststroke": number, "Butterfly": number, "Drill": number, "Kick": number},
   "aiTip": string
 }
+
+Workout:
+${text}
+`;
 
 Workout:
 ${text}
