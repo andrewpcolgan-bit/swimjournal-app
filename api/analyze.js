@@ -34,10 +34,6 @@ Workout:
 ${text}
 `;
 
-Workout:
-${text}
-`;
-
     // Gemini endpoint
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey,
@@ -63,6 +59,12 @@ ${text}
       parsed = JSON.parse(output);
     } catch {
       parsed = { rawOutput: output };
+    }
+        if (!data?.candidates?.length) {
+      return res.status(500).json({
+        error: "Gemini returned no output",
+        details: data
+      });
     }
 
     res.status(200).json(parsed);
