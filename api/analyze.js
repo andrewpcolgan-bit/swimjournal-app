@@ -30,13 +30,21 @@ Your JSON MUST follow this schema:
   "totalYards": number,
   "durationMinutes": number,
   "sectionYards": {
-     "Warmup": number,
-     "Kick": number,
-     "Drill": number,
-     "Main Set": number,
-     "Pull": number,
-     "Sprint Finisher": number,
-     "Cool Down": number
+    "Warmup": number,
+    "Kick": number,
+    "Drill": number,
+    "Main Set": number,
+    "Pull": number,
+    "Sprint Finisher": number,
+    "Cool Down": number
+  },
+  "strokePercentages": {
+    "Freestyle": number,
+    "Backstroke": number,
+    "Breaststroke": number,
+    "Butterfly": number,
+    "Drill": number,
+    "Kick": number
   }
 }
 
