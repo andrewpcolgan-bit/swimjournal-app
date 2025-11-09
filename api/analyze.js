@@ -1,64 +1,84 @@
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Use POST' });
-  }
-
-  const auth = req.headers.authorization || '';
-  const token = auth.replace('Bearer ', '');
-  const expected = process.env.GITHUB_API_KEY;
-
-  // TEMPORARY DEBUG LOGGING
- 
-
-  if (!expected || token !== expected) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  // ... rest of your code
-}
 // api/analyze.js
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Use POST' });
   }
 
+  const expected = process.env.GITHUB_API_KEY;
   const auth = req.headers.authorization || '';
   const token = auth.replace('Bearer ', '');
-  
-  console.log('===== AUTH DEBUG =====');
-  console.log('Received token length:', token.length);
-  console.log('Received token (first 10 chars):', token.substring(0, 10));
-  console.log('Expected token exists:', !!expected);
-  console.log('Expected token length:', expected ? expected.length : 0);
-  console.log('Expected token (first 10 chars):', expected ? expected.substring(0, 10) : 'NONE');
-  console.log('Tokens match:', token === expected);
-  console.log('======================');
-  
-  // Check GitHub API key
-  const expected = process.env.GITHUB_API_KEY;
-  if (!expected || token !== expected) {
+
+  if (!expected || token.trim() !== expected.trim()) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  // (In a real app, you'd parse multipart/form-data and run AI here)
-  // We'll just return mock data so your app works
+  const { text } = req.body || {};
+  if (!text) {
+    return res.status(400).json({ error: 'Missing text' });
+  }
 
-  const now = new Date().toISOString();
+  // Basic text parsing logic
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  const fakePractice = {
+  let totalYards = 0;
+  const sets = [];
+  const strokeCounts = { freestyle: 0, backstroke: 0, breaststroke: 0, butterfly: 0, kick: 0, drill: 0 };
+  const sectionCounts = { warmup: 0, preset: 0, mainset: 0, cooldown: 0 };
+
+  let currentSection = 'mainset';
+  for (let line of lines) {
+    const lower = line.toLowerCase();
+
+    // detect block headers
+    if (lower.includes('warm')) currentSection = 'warmup';
+    else if (lower.includes('pre')) currentSection = 'preset';
+    else if (lower.includes('main')) currentSection = 'mainset';
+    else if (lower.includes('cool')) currentSection = 'cooldown';
+
+    // find patterns like "8x50" or "16x25"
+    const match = line.match(/(\d+)\s*[xX]\s*(\d+)/);
+    if (match) {
+      const reps = parseInt(match[1]);
+      const dist = parseInt(match[2]);
+      const yards = reps * dist;
+      totalYards += yards;
+
+      // detect stroke
+      let stroke = 'freestyle';
+      if (lower.includes('back')) stroke = 'backstroke';
+      else if (lower.includes('breast')) stroke = 'breaststroke';
+      else if (lower.includes('fly')) stroke = 'butterfly';
+      else if (lower.includes('kick')) stroke = 'kick';
+      else if (lower.includes('drill')) stroke = 'drill';
+
+      strokeCounts[stroke] = (strokeCounts[stroke] || 0) + yards;
+      sectionCounts[currentSection] += yards;
+
+      sets.push({ reps, distancePerRep: dist, stroke, section: currentSection, yards });
+    }
+  }
+
+  const strokePercentages = {};
+  for (const [key, val] of Object.entries(strokeCounts)) {
+    if (val > 0) strokePercentages[key] = val / totalYards;
+  }
+
+  const sectionPercentages = {};
+  for (const [key, val] of Object.entries(sectionCounts)) {
+    if (val > 0) sectionPercentages[key] = val / totalYards;
+  }
+
+  const aiSummary = `Detected ${sets.length} sets, total ${totalYards} yards. Most yardage from ${Object.keys(strokePercentages)[0] || 'freestyle'}.`;
+
+  res.status(200).json({
     id: crypto.randomUUID(),
-    date: now,
-    type: "Morning Swim",
-    durationMinutes: 75,
-    distanceYards: 3000,
-    sets: [
-      { reps: 8, distancePerRep: 100, stroke: "freestyle" },
-      { reps: 4, distancePerRep: 50, stroke: "breaststroke" }
-    ],
-    aiSummary: "AI mock summary: Mostly freestyle with some breaststroke focus.",
-    strokePercentages: { freestyle: 0.8, breaststroke: 0.2 },
-    sectionPercentages: { Warmup: 0.1, Main: 0.8, CoolDown: 0.1 }
-  };
-
-  res.status(200).json(fakePractice);
+    date: new Date().toISOString(),
+    type: "Swim Practice",
+    durationMinutes: 90,
+    distanceYards: totalYards,
+    sets,
+    aiSummary,
+    strokePercentages,
+    sectionPercentages
+  });
 }
