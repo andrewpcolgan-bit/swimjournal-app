@@ -1,9 +1,11 @@
 // api/analyze.js
 export default async function handler(req, res) {
+  // --- 1. Check method ---
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Use POST" });
   }
 
+  // --- 2. Auth check using GitHub key (so only your app can call it) ---
   const expected = process.env.GITHUB_API_KEY;
   const auth = req.headers.authorization || "";
   const token = auth.replace("Bearer ", "");
@@ -11,19 +13,22 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
+  // --- 3. Parse incoming request ---
   const { text } = req.body || {};
   if (!text) return res.status(400).json({ error: "Missing text" });
 
   const OPENAI_KEY = process.env.OPENAI_API_KEY;
-  if (!OPENAI_KEY)
+  if (!OPENAI_KEY) {
     return res.status(500).json({ error: "Missing OPENAI_API_KEY in environment" });
+  }
 
+  // --- 4. Build prompt for OpenAI ---
   const prompt = `
 You are a professional swim coach and analyst.
 
-Analyze the swim workout below. Return two things:
-1️⃣ A formatted human-readable breakdown.
-2️⃣ A valid JSON object summarizing the totals.
+Analyze the swim workout below and return two things:
+1️⃣ A human-readable formatted breakdown of the workout.
+2️⃣ A valid JSON object summarizing totals and percentages.
 
 Your JSON MUST follow this schema:
 {
@@ -50,19 +55,36 @@ Your JSON MUST follow this schema:
 
 Then output the formatted text.
 
-Workout:
+Use this structure for the formatted text:
+🏊‍♂️ Workout Breakdown
+[Each section with line-by-line yardage and totals]
+
+🧮 TOTAL YARDAGE
+[List of section totals + grand total]
+
+🏁 SECTION SUMMARY
+Section    Yards    % of Total
+
+🧠 STROKE + DRILL MIX
+Stroke     Yards    % of Total
+
+✅ Summary
+2–3 short sentences summarizing what the practice focused on.
+
+Workout text:
 ---
 ${text}
 ---
 
-Start your response with:
+Start your reply with:
 <JSON>
 { ...json... }
 </JSON>
-Then after that, write the formatted breakdown.
+Then write the formatted text below it.
 `;
 
   try {
+    // --- 5. Send to OpenAI ---
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -79,7 +101,7 @@ Then after that, write the formatted breakdown.
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || "";
 
-    // Extract JSON and text parts
+    // --- 6. Extract JSON + formatted text from the AI response ---
     const jsonMatch = content.match(/<JSON>([\s\S]*?)<\/JSON>/);
     let json = {};
     if (jsonMatch) {
@@ -92,6 +114,7 @@ Then after that, write the formatted breakdown.
 
     const formattedText = content.replace(/<JSON>[\s\S]*?<\/JSON>/, "").trim();
 
+    // --- 7. Build API response for the app ---
     res.status(200).json({
       id: crypto.randomUUID(),
       date: new Date().toISOString(),
@@ -100,6 +123,7 @@ Then after that, write the formatted breakdown.
       distanceYards: json.totalYards || 0,
       durationMinutes: json.durationMinutes || 0,
       sectionYards: json.sectionYards || {},
+      strokePercentages: json.strokePercentages || {},
     });
   } catch (err) {
     console.error("AI error:", err);
