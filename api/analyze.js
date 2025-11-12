@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   const MODEL = "models/gemini-2.5-flash";
   const ENDPOINT = `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent`;
 
-  // Simple diagnostics route
+  // Diagnostics route
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
@@ -27,6 +27,24 @@ export default async function handler(req, res) {
     const { text } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "No text provided" });
+    }
+
+    // Helper: retry Gemini calls up to 3 times with delay
+    async function fetchWithRetry(url, options, retries = 3) {
+      for (let i = 0; i < retries; i++) {
+        const resp = await fetch(url, options);
+        if (resp.ok) return resp;
+
+        if (resp.status === 503) {
+          console.warn(`⚠️ Gemini overloaded (attempt ${i + 1}). Retrying...`);
+          await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+          continue;
+        }
+
+        const errTxt = await resp.text();
+        throw new Error(`Gemini error ${resp.status}: ${errTxt}`);
+      }
+      throw new Error("Gemini API overloaded, please try again later.");
     }
 
     // -----------------------
@@ -117,10 +135,8 @@ Workout text:
 ${text}
 `;
 
-    // -----------------------
     // 🌊 STEP 1: MAIN ANALYSIS REQUEST
-    // -----------------------
-    const resp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
+    const resp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -131,8 +147,8 @@ ${text}
     const data = await resp.json();
 
     if (!data?.candidates?.length) {
-      return res.status(500).json({
-        error: "Gemini returned no output",
+      return res.status(503).json({
+        error: "Gemini is temporarily unavailable. Please try again shortly.",
         details: data,
       });
     }
@@ -145,9 +161,7 @@ ${text}
       parsed = { rawOutput: raw };
     }
 
-    // -----------------------
     // 🧩 STEP 2: AI SUMMARY GENERATION
-    // -----------------------
     const summaryPrompt = `
 You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
 as if explaining to a competitive swimmer what this set focuses on.
@@ -157,7 +171,7 @@ Workout:
 ${text}
 `;
 
-    const summaryResp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
+    const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -170,17 +184,24 @@ ${text}
       summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
       "No summary available.";
 
-    // -----------------------
     // ✅ STEP 3: RETURN MERGED RESULT
-    // -----------------------
     return res.status(200).json({
       ...parsed,
-      aiSummary, // ← NEW field
+      aiSummary,
     });
   } catch (err) {
     console.error("Gemini API Error:", err);
+
+    let message = "An unexpected error occurred. Please try again.";
+    if (err.message.includes("overloaded")) {
+      message = "Gemini servers are currently overloaded. Try again shortly.";
+    } else if (err.message.includes("fetch failed")) {
+      message = "Network error — please check your connection.";
+    }
+
     return res.status(500).json({
-      error: "Server error: " + (err?.message || String(err)),
+      error: message,
+      details: err.message,
     });
   }
 }
