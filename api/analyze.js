@@ -29,24 +29,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No text provided" });
     }
 
-    // Helper: retry Gemini calls up to 3 times with delay
-    async function fetchWithRetry(url, options, retries = 3) {
-      for (let i = 0; i < retries; i++) {
-        const resp = await fetch(url, options);
-        if (resp.ok) return resp;
-
-        if (resp.status === 503) {
-          console.warn(`⚠️ Gemini overloaded (attempt ${i + 1}). Retrying...`);
-          await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
-          continue;
-        }
-
-        const errTxt = await resp.text();
-        throw new Error(`Gemini error ${resp.status}: ${errTxt}`);
-      }
-      throw new Error("Gemini API overloaded, please try again later.");
-    }
-
     // -----------------------
     // 🧠 MAIN ANALYSIS PROMPT
     // -----------------------
@@ -135,14 +117,19 @@ Workout text:
 ${text}
 `;
 
-    // 🌊 STEP 1: MAIN ANALYSIS REQUEST
-    const resp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
+    // 🌊 STEP 1: MAIN ANALYSIS REQUEST (single attempt)
+    const resp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       }),
     });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Gemini API error ${resp.status}: ${errText}`);
+    }
 
     const data = await resp.json();
 
@@ -161,7 +148,7 @@ ${text}
       parsed = { rawOutput: raw };
     }
 
-    // 🧩 STEP 2: AI SUMMARY GENERATION
+    // 🧩 STEP 2: AI SUMMARY GENERATION (single attempt)
     const summaryPrompt = `
 You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
 as if explaining to a competitive swimmer what this set focuses on.
@@ -171,7 +158,7 @@ Workout:
 ${text}
 `;
 
-    const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
+    const summaryResp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -193,7 +180,7 @@ ${text}
     console.error("Gemini API Error:", err);
 
     let message = "An unexpected error occurred. Please try again.";
-    if (err.message.includes("overloaded")) {
+    if (err.message.includes("503") || err.message.includes("overloaded")) {
       message = "Gemini servers are currently overloaded. Try again shortly.";
     } else if (err.message.includes("fetch failed")) {
       message = "Network error — please check your connection.";
