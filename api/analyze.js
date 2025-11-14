@@ -1,5 +1,30 @@
 // api/analyze.js
 
+// 🔁 --- RETRY HELPER (was missing, now added) ---
+async function fetchWithRetry(url, options, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await fetch(url, options);
+
+      // Success OR a real error that's not retryable
+      if (res.status !== 503) {
+        return res;
+      }
+
+      // Otherwise retry after exponential backoff
+      const delay = 400 * Math.pow(2, attempt);
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+    } catch (err) {
+      // Network failure — retry unless last attempt
+      if (attempt === retries - 1) throw err;
+    }
+  }
+
+  // Last attempt
+  return fetch(url, options);
+}
+
 export default async function handler(req, res) {
   const MODEL = "models/gemini-2.5-flash";
   const ENDPOINT = `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent`;
@@ -148,7 +173,7 @@ ${text}
       parsed = { rawOutput: raw };
     }
 
-    // 🧩 STEP 2: AI SUMMARY GENERATION (single attempt)
+    // 🧩 STEP 2: AI SUMMARY GENERATION (now with retry logic)
     const summaryPrompt = `
 You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
 as if explaining to a competitive swimmer what this set focuses on.
@@ -158,27 +183,25 @@ Workout:
 ${text}
 `;
 
-    // 🧠 SUMMARY REQUEST — now uses the SAME retry logic as the main call
-const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: summaryPrompt }] }],
-  }),
-});
+    const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: summaryPrompt }] }],
+      }),
+    });
 
-// parse summary safely
-const summaryData = await summaryResp.json();
-const aiSummary =
-  summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-  "No summary available.";
-
+    const summaryData = await summaryResp.json();
+    const aiSummary =
+      summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+      "No summary available.";
 
     // ✅ STEP 3: RETURN MERGED RESULT
     return res.status(200).json({
       ...parsed,
       aiSummary,
     });
+
   } catch (err) {
     console.error("Gemini API Error:", err);
 
