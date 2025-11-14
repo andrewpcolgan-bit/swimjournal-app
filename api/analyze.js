@@ -158,18 +158,21 @@ Workout:
 ${text}
 `;
 
-    const summaryResp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: summaryPrompt }] }],
-      }),
-    });
+    // 🧠 SUMMARY REQUEST — now uses the SAME retry logic as the main call
+const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: summaryPrompt }] }],
+  }),
+});
 
-    const summaryData = await summaryResp.json();
-    const aiSummary =
-      summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-      "No summary available.";
+// parse summary safely
+const summaryData = await summaryResp.json();
+const aiSummary =
+  summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
+  "No summary available.";
+
 
     // ✅ STEP 3: RETURN MERGED RESULT
     return res.status(200).json({
