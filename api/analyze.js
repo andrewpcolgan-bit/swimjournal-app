@@ -13,8 +13,7 @@ async function fetchWithRetry(url, options, retries = 3) {
 
       // Otherwise retry after exponential backoff
       const delay = 400 * Math.pow(2, attempt);
-      await new Promise(resolve => setTimeout(resolve, delay));
-
+      await new Promise((resolve) => setTimeout(resolve, delay));
     } catch (err) {
       // Network failure — retry unless last attempt
       if (attempt === retries - 1) throw err;
@@ -100,8 +99,26 @@ Even if some sections are missing, include them in the JSON with value 0.
 Also:
 - totalYards = sum of all section yardages.
 - strokePercentages should estimate proportions of each stroke mentioned in the text.
-- aiTip should be a concise coaching insight (1–3 sentences) summarizing the workout’s focus and what the swimmer should pay attention to.
-- Identify strokes by keywords:
+- practiceTag should be a short phrase summarizing the workout type, like:
+  "sprint set", "threshold free", "aerobic IM", "kick-heavy", "pull-heavy", "race-pace", etc.
+- recoverySuggestions should describe 3–5 specific post-swim stretches and/or light recovery actions
+  tailored to the muscle groups most stressed by this workout.
+  Focus on:
+    * shoulders and lats for freestyle/backstroke
+    * hips and adductors for breaststroke
+    * shoulders/chest/core for butterfly
+    * hips/legs for kick-heavy sets
+  For each stretch, briefly mention:
+    * the stretch name
+    * main body area
+    * a short instruction phrase
+    * suggested hold time (e.g. 2×30s)
+  Keep recoverySuggestions under about 100 words, formatted as a single text block where individual
+  stretches are separated by periods or line breaks.
+- aiTip should be a short 1–2 sentence coaching insight OR can repeat the recoverySuggestions; it will
+  be used to power a "Recovery & Stretches" card in the app.
+
+Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
   * Backstroke: "back", "bk"
   * Breaststroke: "breast", "br"
@@ -135,6 +152,8 @@ Return JSON in this exact structure:
     "Choice": number,
     "IM": number
   },
+  "practiceTag": string,
+  "recoverySuggestions": string,
   "aiTip": string
 }
 
@@ -173,6 +192,16 @@ ${text}
       parsed = { rawOutput: raw };
     }
 
+    // Normalize aiTip to prefer recoverySuggestions if available
+    const merged = parsed && typeof parsed === "object" ? { ...parsed } : { rawOutput: raw };
+    if (typeof merged.recoverySuggestions === "string" && merged.recoverySuggestions.trim()) {
+      merged.aiTip = merged.recoverySuggestions;
+    } else if (typeof merged.aiTip === "string") {
+      merged.aiTip = merged.aiTip;
+    } else {
+      merged.aiTip = "";
+    }
+
     // 🧩 STEP 2: AI SUMMARY GENERATION (now with retry logic)
     const summaryPrompt = `
 You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
@@ -198,10 +227,9 @@ ${text}
 
     // ✅ STEP 3: RETURN MERGED RESULT
     return res.status(200).json({
-      ...parsed,
+      ...merged,
       aiSummary,
     });
-
   } catch (err) {
     console.error("Gemini API Error:", err);
 
