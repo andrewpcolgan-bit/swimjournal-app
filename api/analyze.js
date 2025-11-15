@@ -1,6 +1,6 @@
 // api/analyze.js
 
-// 🔁 --- RETRY HELPER (was missing, now added) ---
+// 🔁 --- RETRY HELPER ---
 async function fetchWithRetry(url, options, retries = 3) {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -28,7 +28,7 @@ export default async function handler(req, res) {
   const MODEL = "models/gemini-2.5-flash";
   const ENDPOINT = `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent`;
 
-  // Diagnostics route
+  // Simple diagnostics route
   if (req.method === "GET") {
     return res.status(200).json({
       ok: true,
@@ -101,22 +101,33 @@ Also:
 - strokePercentages should estimate proportions of each stroke mentioned in the text.
 - practiceTag should be a short phrase summarizing the workout type, like:
   "sprint set", "threshold free", "aerobic IM", "kick-heavy", "pull-heavy", "race-pace", etc.
-- recoverySuggestions should describe 3–5 specific post-swim stretches and/or light recovery actions
-  tailored to the muscle groups most stressed by this workout.
-  Focus on:
-    * shoulders and lats for freestyle/backstroke
-    * hips and adductors for breaststroke
-    * shoulders/chest/core for butterfly
-    * hips/legs for kick-heavy sets
-  For each stretch, briefly mention:
-    * the stretch name
-    * main body area
-    * a short instruction phrase
-    * suggested hold time (e.g. 2×30s)
-  Keep recoverySuggestions under about 100 words, formatted as a single text block where individual
-  stretches are separated by periods or line breaks.
-- aiTip should be a short 1–2 sentence coaching insight OR can repeat the recoverySuggestions; it will
-  be used to power a "Recovery & Stretches" card in the app.
+
+- recoverySuggestions must be a MULTI-LINE text block describing individual stretches and recovery items.
+  Each line must describe exactly ONE stretch or recovery item, using this format:
+
+  Stretch Name (Main Area, Secondary Area): Short how-to sentence. • dose
+
+  Where:
+    - Stretch Name = concise name like "Doorway Chest Stretch"
+    - Main/Secondary Area = 1–3 body areas, e.g. "Pectorals, Shoulders"
+    - Short how-to sentence = 1 short sentence on how to do the stretch
+    - dose = how many sets/seconds, like "2×30s", "3×20s per side", "60s easy swim"
+
+  Examples of valid lines:
+    Doorway Chest Stretch (Pectorals, Shoulders): Stand in a doorway, forearms on the frame at shoulder height, gently lean chest forward. • 2×30s
+    Overhead Lat Stretch (Lats, Obliques): Reach one arm overhead and gently bend to the opposite side. • 2×30s per side
+    Child’s Pose (Back, Hips): Kneel on your heels, fold forward with arms extended, breathe slowly. • 2×45s
+
+  - You are NOT limited by word count. Include as many lines as are useful (usually 4–7).
+  - Prioritize body areas that are most stressed by this workout:
+      * shoulders and lats for freestyle/backstroke
+      * hips and adductors for breaststroke
+      * shoulders/chest/core for butterfly
+      * hips/legs for kick-heavy sets
+  - It’s okay if you occasionally include a short cool-down swim as one "stretch line" following the same format.
+
+- aiTip should be a short 1–2 sentence coaching insight about recovery or how to approach the next similar session.
+  It should be separate from recoverySuggestions.
 
 Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
@@ -161,7 +172,7 @@ Workout text:
 ${text}
 `;
 
-    // 🌊 STEP 1: MAIN ANALYSIS REQUEST (single attempt)
+    // 🌊 STEP 1: MAIN ANALYSIS REQUEST
     const resp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -192,17 +203,21 @@ ${text}
       parsed = { rawOutput: raw };
     }
 
-    // Normalize aiTip to prefer recoverySuggestions if available
-    const merged = parsed && typeof parsed === "object" ? { ...parsed } : { rawOutput: raw };
-    if (typeof merged.recoverySuggestions === "string" && merged.recoverySuggestions.trim()) {
-      merged.aiTip = merged.recoverySuggestions;
-    } else if (typeof merged.aiTip === "string") {
-      merged.aiTip = merged.aiTip;
-    } else {
-      merged.aiTip = "";
+    const merged =
+      parsed && typeof parsed === "object" ? { ...parsed } : { rawOutput: raw };
+
+    // Normalize aiTip: if missing, derive a tiny hint from the first recovery line
+    if (
+      (!merged.aiTip || !String(merged.aiTip).trim()) &&
+      typeof merged.recoverySuggestions === "string"
+    ) {
+      const firstLine =
+        merged.recoverySuggestions.split("\n").find((l) => l.trim().length > 0) ??
+        "";
+      merged.aiTip = firstLine.trim();
     }
 
-    // 🧩 STEP 2: AI SUMMARY GENERATION (now with retry logic)
+    // 🧩 STEP 2: AI SUMMARY GENERATION (with retry)
     const summaryPrompt = `
 You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
 as if explaining to a competitive swimmer what this set focuses on.
