@@ -6,13 +6,13 @@ async function fetchWithRetry(url, options, retries = 3) {
     try {
       const res = await fetch(url, options);
 
-      // Success OR a real error that's not retryable
+      // If it's NOT a 503 overload, just return it.
       if (res.status !== 503) {
         return res;
       }
 
-      // Otherwise retry after exponential backoff
-      const delay = 400 * Math.pow(2, attempt);
+      // 503 -> exponential backoff and retry
+      const delay = 400 * Math.pow(2, attempt); // 400ms, 800ms, 1600ms...
       await new Promise((resolve) => setTimeout(resolve, delay));
     } catch (err) {
       // Network failure — retry unless last attempt
@@ -20,7 +20,7 @@ async function fetchWithRetry(url, options, retries = 3) {
     }
   }
 
-  // Last attempt
+  // Last attempt: just return whatever happens
   return fetch(url, options);
 }
 
@@ -129,6 +129,10 @@ Also:
 - aiTip should be a short 1–2 sentence coaching insight about recovery or how to approach the next similar session.
   It should be separate from recoverySuggestions.
 
+- aiSummary should be a short (1–2 sentence) summary of this workout
+  as if explaining to a competitive swimmer what this set focuses on.
+  Keep it concise and motivational.
+
 Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
   * Backstroke: "back", "bk"
@@ -165,15 +169,16 @@ Return JSON in this exact structure:
   },
   "practiceTag": string,
   "recoverySuggestions": string,
-  "aiTip": string
+  "aiTip": string,
+  "aiSummary": string
 }
 
 Workout text:
 ${text}
 `;
 
-    // 🌊 STEP 1: MAIN ANALYSIS REQUEST
-    const resp = await fetch(`${ENDPOINT}?key=${apiKey}`, {
+    // 🌊 MAIN ANALYSIS REQUEST (with retry)
+    const resp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -212,52 +217,34 @@ ${text}
       typeof merged.recoverySuggestions === "string"
     ) {
       const firstLine =
-        merged.recoverySuggestions.split("\n").find((l) => l.trim().length > 0) ??
-        "";
+        merged.recoverySuggestions
+          .split("\n")
+          .find((l) => l.trim().length > 0) ?? "";
       merged.aiTip = firstLine.trim();
     }
 
-    // 🧩 STEP 2: AI SUMMARY GENERATION (with retry)
-    const summaryPrompt = `
-You are an elite swim coach. Write a short (1–2 sentence) summary of this workout
-as if explaining to a competitive swimmer what this set focuses on.
-Keep it concise and motivational.
+    // Ensure aiSummary exists
+    if (!merged.aiSummary || !String(merged.aiSummary).trim()) {
+      merged.aiSummary = "No summary available.";
+    }
 
-Workout:
-${text}
-`;
-
-    const summaryResp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: summaryPrompt }] }],
-      }),
-    });
-
-    const summaryData = await summaryResp.json();
-    const aiSummary =
-      summaryData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ||
-      "No summary available.";
-
-    // ✅ STEP 3: RETURN MERGED RESULT
-    return res.status(200).json({
-      ...merged,
-      aiSummary,
-    });
+    // ✅ RETURN FINAL RESULT
+    return res.status(200).json(merged);
   } catch (err) {
     console.error("Gemini API Error:", err);
 
     let message = "An unexpected error occurred. Please try again.";
-    if (err.message.includes("503") || err.message.includes("overloaded")) {
+    const text = typeof err.message === "string" ? err.message : "";
+
+    if (text.includes("503") || text.toLowerCase().includes("overloaded")) {
       message = "Gemini servers are currently overloaded. Try again shortly.";
-    } else if (err.message.includes("fetch failed")) {
+    } else if (text.includes("fetch failed")) {
       message = "Network error — please check your connection.";
     }
 
     return res.status(500).json({
       error: message,
-      details: err.message,
+      details: text,
     });
   }
 }
