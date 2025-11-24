@@ -133,6 +133,26 @@ Also:
   as if explaining to a competitive swimmer what this set focuses on.
   Keep it concise and motivational.
 
+- intensity_summary:
+  - Classify yardage into 5 intensity buckets:
+    * easy: warmup, cooldown, easy swim, recovery
+    * aerobic: steady state, moderate effort, base pace
+    * threshold: hard aerobic, pace work, interval training
+    * race: race pace efforts (100 pace, 200 pace)
+    * sprint: max effort, all-out speed
+  - Also calculate work vs recovery:
+    * work_yards: main sets, threshold, race, sprint
+    * recovery_yards: warmup, easy, drills, cooldown, easy kick
+
+- insights:
+  - difficulty_score: 1-10 based on volume and intensity.
+  - strain_category: "Low", "Medium", or "High".
+  - focus_tags: 2-4 tags describing the session (e.g. "Threshold", "Breaststroke", "Kick heavy").
+  - highlight_bullets: 3-4 short, interesting bullet points about the practice. Examples:
+    * "You did 1,800 yards of freestyle."
+    * "Largest continuous swim: 800 yards."
+    * "Breaststroke made up 35% of total yardage."
+
 Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
   * Backstroke: "back", "bk"
@@ -146,7 +166,21 @@ Identify strokes by keywords:
   * Choice: "choice", "any stroke"
 
 Return JSON in this exact structure:
-{
+  "intensity_summary": {
+    "easy_yards": number,
+    "aerobic_yards": number,
+    "threshold_yards": number,
+    "race_yards": number,
+    "sprint_yards": number,
+    "work_yards": number,
+    "recovery_yards": number
+  },
+  "insights": {
+    "difficulty_score": number, // 1-10
+    "strain_category": string, // "Low", "Medium", "High"
+    "focus_tags": [string], // e.g. ["Threshold", "Breaststroke"]
+    "highlight_bullets": [string] // 3-4 short sentences
+  },
   "totalYards": number,
   "sectionYards": {
     "Warmup": number,
