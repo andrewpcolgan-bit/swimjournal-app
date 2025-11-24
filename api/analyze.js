@@ -153,6 +153,32 @@ Also:
     * "Largest continuous swim: 800 yards."
     * "Breaststroke made up 35% of total yardage."
 
+- recovery_plan:
+  Design a personalized recovery plan for this specific practice based on:
+    * Intensity and strain level
+    * Focus areas (strokes, body regions emphasized)
+    * Distance vs sprint work
+  
+  Return a structured array of recovery tasks with THREE timing buckets:
+    * immediate: Right after practice (0-2 hours)
+    * today: Later in the day (evening, before bed)
+    * tomorrow: Next session or next day
+  
+  For each task, provide:
+    * id: unique string identifier (e.g. "task_1", "task_2")
+    * text: Short, actionable instruction (e.g. "Doorway chest stretch 2×30s per side")
+    * bucket: one of "immediate", "today", "tomorrow"
+    * body_region: one of "shoulders", "legs", "hips", "core", "full-body"
+    * kind: one of "stretch", "mobility", "easy_swim", "activation", "lifestyle"
+    * include_in_quick: boolean (true = include in a short 10-15 min recovery routine)
+  
+  Guidelines:
+    * Immediate tasks: 3-5 quick stretches/cooldown activities
+    * Today tasks: 2-3 recovery activities (foam rolling, light cardio, nutrition)
+    * Tomorrow tasks: 1-2 activation or preparation items
+    * Mark 4-6 total tasks as include_in_quick=true for a streamlined routine
+    * Focus on body regions most stressed in this practice
+
 Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
   * Backstroke: "back", "bk"
@@ -180,6 +206,18 @@ Return JSON in this exact structure:
     "strain_category": string, // "Low", "Medium", "High"
     "focus_tags": [string], // e.g. ["Threshold", "Breaststroke"]
     "highlight_bullets": [string] // 3-4 short sentences
+  },
+  "recovery_plan": {
+    "tasks": [
+      {
+        "id": string, // e.g. "task_1"
+        "text": string, // actionable instruction
+        "bucket": string, // "immediate" | "today" | "tomorrow"
+        "body_region": string, // "shoulders" | "legs" | "hips" | "core" | "full-body"
+        "kind": string, // "stretch" | "mobility" | "easy_swim" | "activation" | "lifestyle"
+        "include_in_quick": boolean
+      }
+    ]
   },
   "totalYards": number,
   "sectionYards": {
@@ -260,6 +298,24 @@ ${text}
     // Ensure aiSummary exists
     if (!merged.aiSummary || !String(merged.aiSummary).trim()) {
       merged.aiSummary = "No summary available.";
+    }
+
+    // Ensure recovery_plan exists and is well-formed
+    if (!merged.recovery_plan || typeof merged.recovery_plan !== 'object') {
+      merged.recovery_plan = { tasks: [] };
+    } else if (!Array.isArray(merged.recovery_plan.tasks)) {
+      merged.recovery_plan.tasks = [];
+    } else {
+      // Validate each task has required fields
+      merged.recovery_plan.tasks = merged.recovery_plan.tasks.filter(task => {
+        return task &&
+          typeof task.id === 'string' &&
+          typeof task.text === 'string' &&
+          typeof task.bucket === 'string' &&
+          typeof task.body_region === 'string' &&
+          typeof task.kind === 'string' &&
+          typeof task.include_in_quick === 'boolean';
+      });
     }
 
     // ✅ RETURN FINAL RESULT
