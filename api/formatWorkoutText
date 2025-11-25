@@ -1,0 +1,724 @@
+// api/formatWorkoutText.js
+
+/**
+ * @typedef {'warmup' | 'preset' | 'main' | 'postset' | 'cooldown' | 'unknown'} SectionName
+ * @typedef {'sendoff' | 'rest' | 'none'} IntervalKind
+ * @typedef {'free' | 'back' | 'breast' | 'fly' | 'im' | 'choice' | 'mixed'} Stroke
+ * @typedef {'swim' | 'kick' | 'pull' | 'drill' | 'scull' | 'technique'} Mode
+ * @typedef {'evenPace' | 'descend' | 'build' | 'other'} PatternType
+ */
+
+/**
+ * @typedef {Object} Interval
+ * @property {IntervalKind} kind
+ * @property {number | null} seconds
+ */
+
+/**
+ * @typedef {Object} Pattern
+ * @property {PatternType} type
+ * @property {number} [start]
+ * @property {number} [end]
+ * @property {string} [raw]
+ */
+
+/**
+ * @typedef {Object} FormattedBlock
+ * @property {string} displayText
+ * @property {SectionName} section
+ * @property {number} reps
+ * @property {number | null} distance
+ * @property {Stroke | null} stroke
+ * @property {Mode | null} mode
+ * @property {Interval} interval
+ * @property {Pattern | null} pattern
+ * @property {string[]} equipment
+ * @property {string} notes
+ */
+
+/**
+ * @typedef {Object} FormattedSection
+ * @property {SectionName} name
+ * @property {string} title
+ * @property {FormattedBlock[]} blocks
+ */
+
+/**
+ * @typedef {Object} FormatIssue
+ * @property {number} lineNumber
+ * @property {string} lineText
+ * @property {string} reason
+ */
+
+/**
+ * @typedef {Object} FormatWorkoutResponse
+ * @property {FormattedSection[]} sections
+ * @property {FormatIssue[]} issues
+ * @property {string} normalizedText
+ */
+
+// 🔁 --- RETRY HELPER ---
+async function fetchWithRetry(url, options, retries = 3) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const res = await fetch(url, options);
+
+            // If it's NOT a 503 overload, just return it.
+            if (res.status !== 503) {
+                return res;
+            }
+
+            // 503 -> exponential backoff and retry
+            const delay = 400 * Math.pow(2, attempt); // 400ms, 800ms, 1600ms...
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        } catch (err) {
+            // Network failure — retry unless last attempt
+            if (attempt === retries - 1) throw err;
+        }
+    }
+
+    // Last attempt: just return whatever happens
+    return fetch(url, options);
+}
+
+// 🔍 --- VALIDATION FUNCTIONS ---
+
+/**
+ * Validate that value is one of the allowed enum values
+ * @param {any} value
+ * @param {string[]} allowed
+ * @param {string} fieldName
+ * @returns {boolean}
+ */
+function isValidEnum(value, allowed, fieldName) {
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+        console.error(`Invalid ${fieldName}: ${value}. Must be one of: ${allowed.join(', ')}`);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Validate Interval object
+ * @param {any} interval
+ * @returns {boolean}
+ */
+function validateInterval(interval) {
+    if (!interval || typeof interval !== 'object') {
+        console.error('Interval must be an object');
+        return false;
+    }
+
+    if (!isValidEnum(interval.kind, ['sendoff', 'rest', 'none'], 'interval.kind')) {
+        return false;
+    }
+
+    if (interval.seconds !== null && typeof interval.seconds !== 'number') {
+        console.error('Interval.seconds must be number or null');
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Validate Pattern object
+ * @param {any} pattern
+ * @returns {boolean}
+ */
+function validatePattern(pattern) {
+    if (pattern === null) return true;
+
+    if (!pattern || typeof pattern !== 'object') {
+        console.error('Pattern must be an object or null');
+        return false;
+    }
+
+    if (!isValidEnum(pattern.type, ['evenPace', 'descend', 'build', 'other'], 'pattern.type')) {
+        return false;
+    }
+
+    if (pattern.start !== undefined && typeof pattern.start !== 'number') {
+        console.error('Pattern.start must be number or undefined');
+        return false;
+    }
+
+    if (pattern.end !== undefined && typeof pattern.end !== 'number') {
+        console.error('Pattern.end must be number or undefined');
+        return false;
+    }
+
+    if (pattern.raw !== undefined && typeof pattern.raw !== 'string') {
+        console.error('Pattern.raw must be string or undefined');
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Validate FormattedBlock object
+ * @param {any} block
+ * @param {number} index
+ * @returns {boolean}
+ */
+function validateBlock(block, index) {
+    if (!block || typeof block !== 'object') {
+        console.error(`Block ${index} must be an object`);
+        return false;
+    }
+
+    // Required fields
+    if (typeof block.displayText !== 'string') {
+        console.error(`Block ${index}: displayText must be string`);
+        return false;
+    }
+
+    if (!isValidEnum(block.section, ['warmup', 'preset', 'main', 'postset', 'cooldown', 'unknown'], `block ${index} section`)) {
+        return false;
+    }
+
+    if (typeof block.reps !== 'number') {
+        console.error(`Block ${index}: reps must be number`);
+        return false;
+    }
+
+    if (block.distance !== null && typeof block.distance !== 'number') {
+        console.error(`Block ${index}: distance must be number or null`);
+        return false;
+    }
+
+    // Nullable stroke
+    if (block.stroke !== null && !isValidEnum(block.stroke, ['free', 'back', 'breast', 'fly', 'im', 'choice', 'mixed'], `block ${index} stroke`)) {
+        return false;
+    }
+
+    // Nullable mode
+    if (block.mode !== null && !isValidEnum(block.mode, ['swim', 'kick', 'pull', 'drill', 'scull', 'technique'], `block ${index} mode`)) {
+        return false;
+    }
+
+    // Interval (required)
+    if (!validateInterval(block.interval)) {
+        console.error(`Block ${index}: invalid interval`);
+        return false;
+    }
+
+    // Pattern (nullable)
+    if (!validatePattern(block.pattern)) {
+        console.error(`Block ${index}: invalid pattern`);
+        return false;
+    }
+
+    // Equipment array
+    if (!Array.isArray(block.equipment)) {
+        console.error(`Block ${index}: equipment must be array`);
+        return false;
+    }
+
+    if (!block.equipment.every(e => typeof e === 'string')) {
+        console.error(`Block ${index}: all equipment items must be strings`);
+        return false;
+    }
+
+    // Notes
+    if (typeof block.notes !== 'string') {
+        console.error(`Block ${index}: notes must be string`);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Validate FormattedSection object
+ * @param {any} section
+ * @param {number} index
+ * @returns {boolean}
+ */
+function validateSection(section, index) {
+    if (!section || typeof section !== 'object') {
+        console.error(`Section ${index} must be an object`);
+        return false;
+    }
+
+    if (!isValidEnum(section.name, ['warmup', 'preset', 'main', 'postset', 'cooldown', 'unknown'], `section ${index} name`)) {
+        return false;
+    }
+
+    if (typeof section.title !== 'string') {
+        console.error(`Section ${index}: title must be string`);
+        return false;
+    }
+
+    if (!Array.isArray(section.blocks)) {
+        console.error(`Section ${index}: blocks must be array`);
+        return false;
+    }
+
+    for (let i = 0; i < section.blocks.length; i++) {
+        if (!validateBlock(section.blocks[i], i)) {
+            console.error(`Section ${index}, block ${i} failed validation`);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Validate FormatIssue object
+ * @param {any} issue
+ * @param {number} index
+ * @returns {boolean}
+ */
+function validateIssue(issue, index) {
+    if (!issue || typeof issue !== 'object') {
+        console.error(`Issue ${index} must be an object`);
+        return false;
+    }
+
+    if (typeof issue.lineNumber !== 'number') {
+        console.error(`Issue ${index}: lineNumber must be number`);
+        return false;
+    }
+
+    if (typeof issue.lineText !== 'string') {
+        console.error(`Issue ${index}: lineText must be string`);
+        return false;
+    }
+
+    if (typeof issue.reason !== 'string') {
+        console.error(`Issue ${index}: reason must be string`);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Validate complete FormatWorkoutResponse
+ * @param {any} response
+ * @returns {boolean}
+ */
+function validateResponse(response) {
+    if (!response || typeof response !== 'object') {
+        console.error('Response must be an object');
+        return false;
+    }
+
+    // Sections (required array)
+    if (!Array.isArray(response.sections)) {
+        console.error('Response.sections must be an array');
+        return false;
+    }
+
+    for (let i = 0; i < response.sections.length; i++) {
+        if (!validateSection(response.sections[i], i)) {
+            return false;
+        }
+    }
+
+    // Issues (required array)
+    if (!Array.isArray(response.issues)) {
+        console.error('Response.issues must be an array');
+        return false;
+    }
+
+    for (let i = 0; i < response.issues.length; i++) {
+        if (!validateIssue(response.issues[i], i)) {
+            return false;
+        }
+    }
+
+    // Normalized text (required string)
+    if (typeof response.normalizedText !== 'string') {
+        console.error('Response.normalizedText must be string');
+        return false;
+    }
+
+    return true;
+}
+
+// 🧠 --- MAIN HANDLER ---
+
+export default async function handler(req, res) {
+    const MODEL = "models/gemini-2.5-flash";
+    const ENDPOINT = `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent`;
+
+    // Simple diagnostics route
+    if (req.method === "GET") {
+        return res.status(200).json({
+            ok: true,
+            model: MODEL,
+            endpoint: ENDPOINT,
+            build: process.env.VERCEL_GIT_COMMIT_SHA || "local",
+        });
+    }
+
+    if (req.method !== "POST") {
+        return res.status(405).json({ error: "Method not allowed" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return res.status(401).json({ error: "Missing Gemini API key" });
+    }
+
+    try {
+        const { text, poolType = "SCY", defaultSection = "main" } = req.body || {};
+
+        if (!text || !text.trim()) {
+            return res.status(400).json({ error: "Missing workout text" });
+        }
+
+        // -----------------------
+        // 🧠 FORMATTING PROMPT
+        // -----------------------
+        const prompt = `You are an expert swim workout formatter. Your task is to parse raw swim workout text (often messy, coach-written) and output a strict, validated JSON structure.
+
+**CRITICAL RULES:**
+1. Output ONLY valid JSON. No markdown, no commentary, no extra text.
+2. Do NOT invent sets that aren't in the text.
+3. Normalize all notation to be consistent.
+4. If a line is ambiguous or unclear, add it to the "issues" array.
+
+**INPUT CONTEXT:**
+- Pool Type: ${poolType}
+- Default Section (if no header): ${defaultSection}
+
+**OUTPUT SCHEMA:**
+
+{
+  "sections": [
+    {
+      "name": "warmup" | "preset" | "main" | "postset" | "cooldown" | "unknown",
+      "title": "Warmup" | "Pre-Set" | "Main Set" | "Post-Set" | "Cooldown" | etc.,
+      "blocks": [
+        {
+          "displayText": "4 x 50 free @ :50 – descend 1–4",
+          "section": "warmup",
+          "reps": 4,
+          "distance": 50,
+          "stroke": "free" | "back" | "breast" | "fly" | "im" | "choice" | "mixed" | null,
+          "mode": "swim" | "kick" | "pull" | "drill" | "scull" | "technique" | null,
+          "interval": {
+            "kind": "sendoff" | "rest" | "none",
+            "seconds": 50 | null
+          },
+          "pattern": {
+            "type": "evenPace" | "descend" | "build" | "other",
+            "start": 1,
+            "end": 4,
+            "raw": "descend 1–4"
+          } | null,
+          "equipment": ["fins", "paddles"] | [],
+          "notes": "additional instructions"
+        }
+      ]
+    }
+  ],
+  "issues": [
+    {
+      "lineNumber": 5,
+      "lineText": "mysterious text here",
+      "reason": "Could not parse reps/distance"
+    }
+  ],
+  "normalizedText": "Warmup\\n4 x 50 free @ :50 – descend 1–4\\n\\nMain Set\\n..."
+}
+
+**NORMALIZATION RULES:**
+
+1. **Section Headers:**
+   - "Warmup", "Warm-up", "WU" → name: "warmup", title: "Warmup"
+   - "Pre-set", "Preset", "Pre Set" → name: "preset", title: "Pre-Set"
+   - "Main", "Main Set" → name: "main", title: "Main Set"
+   - "Post-set", "Post Set" → name: "postset", title: "Post-Set"
+   - "Cooldown", "Cool-down", "CD" → name: "cooldown", title: "Cooldown"
+   - If no section header found, use defaultSection: "${defaultSection}"
+
+2. **Reps and Distance:**
+   - "8 x 50" → reps: 8, distance: 50
+   - "4x100" → reps: 4, distance: 100
+   - "400 swim" → reps: 1, distance: 400
+   - "400" alone → reps: 1, distance: 400
+
+3. **Strokes:**
+   - "free", "fr", "freestyle" → "free"
+   - "back", "bk", "backstroke" → "back"
+   - "breast", "br", "breaststroke" → "breast"
+   - "fly", "butterfly" → "fly"
+   - "IM", "I.M." → "im"
+   - "choice" → "choice"
+   - If multiple strokes in one line → "mixed"
+   - If unspecified → null
+
+4. **Modes:**
+   - "kick" → mode: "kick"
+   - "pull" → mode: "pull"
+   - "drill" → mode: "drill"
+   - "swim" → mode: "swim"
+   - "scull" → mode: "scull"
+   - "technique" → mode: "technique"
+   - If unspecified → null
+
+5. **Intervals:**
+   - "@ 1:10" → kind: "sendoff", seconds: 70
+   - "@ :50" → kind: "sendoff", seconds: 50
+   - "@ 2:00" → kind: "sendoff", seconds: 120
+   - ":15 rest", "15s rest", "15 rest" → kind: "rest", seconds: 15
+   - "1:00 rest" → kind: "rest", seconds: 60
+   - No interval mentioned → kind: "none", seconds: null
+   - Normalize "1.10" or "1-10" to "1:10" (70 seconds)
+
+6. **Patterns:**
+   - "descend 1–4", "DESC 1-4" → type: "descend", start: 1, end: 4, raw: "descend 1–4"
+   - "build 1–4" → type: "build", start: 1, end: 4
+   - "even pace", "steady" → type: "evenPace"
+   - "easy", "aerobic", "fast", "sprint" if not a specific pattern → type: "other", raw: "easy"
+   - If no pattern → null
+
+7. **Equipment:**
+   - Look for "fins", "paddles", "snorkel", "buoy", "band", "parachute", etc.
+   - Store as array: ["fins", "paddles"]
+   - If none mentioned → []
+
+8. **Notes:**
+   - Any additional descriptive text (e.g., "focus on streamline", "perfect technique")
+   - Empty string if nothing
+
+9. **Rounds/Repeats:**
+   - "3x through:" or "2 rounds:" means the following blocks are repeated.
+   - You can either:
+     a) Multiply the reps (e.g., "3x through 4x50" → reps: 12, distance: 50)
+     b) OR add a note like "3 rounds" and keep reps: 4
+   - Use whichever is clearer for the app to consume.
+
+10. **Issues:**
+    - If a line has no clear reps/distance and isn't a section header, add to issues array.
+    - Include lineNumber (1-indexed), lineText, and reason.
+
+**EXAMPLE 1:**
+
+Input:
+\`\`\`
+Warmup
+400 swim
+4 x 50 drill @ :55
+
+Main Set
+8 x 50 free @ :50 – descend 1–4
+\`\`\`
+
+Output:
+\`\`\`json
+{
+  "sections": [
+    {
+      "name": "warmup",
+      "title": "Warmup",
+      "blocks": [
+        {
+          "displayText": "400 swim",
+          "section": "warmup",
+          "reps": 1,
+          "distance": 400,
+          "stroke": null,
+          "mode": "swim",
+          "interval": { "kind": "none", "seconds": null },
+          "pattern": null,
+          "equipment": [],
+          "notes": ""
+        },
+        {
+          "displayText": "4 x 50 drill @ :55",
+          "section": "warmup",
+          "reps": 4,
+          "distance": 50,
+          "stroke": null,
+          "mode": "drill",
+          "interval": { "kind": "sendoff", "seconds": 55 },
+          "pattern": null,
+          "equipment": [],
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "title": "Main Set",
+      "blocks": [
+        {
+          "displayText": "8 x 50 free @ :50 – descend 1–4",
+          "section": "main",
+          "reps": 8,
+          "distance": 50,
+          "stroke": "free",
+          "mode": null,
+          "interval": { "kind": "sendoff", "seconds": 50 },
+          "pattern": { "type": "descend", "start": 1, "end": 4, "raw": "descend 1–4" },
+          "equipment": [],
+          "notes": ""
+        }
+      ]
+    }
+  ],
+  "issues": [],
+  "normalizedText": "Warmup\\n400 swim\\n4 x 50 drill @ :55\\n\\nMain Set\\n8 x 50 free @ :50 – descend 1–4"
+}
+\`\`\`
+
+**EXAMPLE 2:**
+
+Input:
+\`\`\`
+WU
+8x25 kick @ :30
+
+Main
+3x through:
+ 4x50 fr @ :50 build
+ 2x100 IM @ 1.30 aerobic
+
+Some random note here
+\`\`\`
+
+Output:
+\`\`\`json
+{
+  "sections": [
+    {
+      "name": "warmup",
+      "title": "Warmup",
+      "blocks": [
+        {
+          "displayText": "8 x 25 kick @ :30",
+          "section": "warmup",
+          "reps": 8,
+          "distance": 25,
+          "stroke": null,
+          "mode": "kick",
+          "interval": { "kind": "sendoff", "seconds": 30 },
+          "pattern": null,
+          "equipment": [],
+          "notes": ""
+        }
+      ]
+    },
+    {
+      "name": "main",
+      "title": "Main Set",
+      "blocks": [
+        {
+          "displayText": "3 rounds: 4 x 50 free @ :50 – build",
+          "section": "main",
+          "reps": 12,
+          "distance": 50,
+          "stroke": "free",
+          "mode": null,
+          "interval": { "kind": "sendoff", "seconds": 50 },
+          "pattern": { "type": "build", "raw": "build" },
+          "equipment": [],
+          "notes": "3 rounds"
+        },
+        {
+          "displayText": "3 rounds: 2 x 100 IM @ 1:30 – aerobic",
+          "section": "main",
+          "reps": 6,
+          "distance": 100,
+          "stroke": "im",
+          "mode": null,
+          "interval": { "kind": "sendoff", "seconds": 90 },
+          "pattern": { "type": "other", "raw": "aerobic" },
+          "equipment": [],
+          "notes": "3 rounds"
+        }
+      ]
+    }
+  ],
+  "issues": [
+    {
+      "lineNumber": 8,
+      "lineText": "Some random note here",
+      "reason": "No clear reps/distance, appears to be a note"
+    }
+  ],
+  "normalizedText": "Warmup\\n8 x 25 kick @ :30\\n\\nMain Set\\n3 rounds:\\n  4 x 50 free @ :50 – build\\n  2 x 100 IM @ 1:30 – aerobic"
+}
+\`\`\`
+
+---
+
+**NOW, PARSE THE FOLLOWING WORKOUT:**
+
+${text}
+
+Remember: Output ONLY the JSON. No extra text, no markdown fences, no commentary.`;
+
+        // 🌊 MAIN FORMATTING REQUEST (with retry)
+        const resp = await fetchWithRetry(`${ENDPOINT}?key=${apiKey}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+            }),
+        });
+
+        if (!resp.ok) {
+            const errText = await resp.text();
+            console.error(`Gemini API error ${resp.status}: ${errText}`);
+            return res.status(502).json({ error: "Failed to contact formatting model" });
+        }
+
+        const data = await resp.json();
+
+        if (!data?.candidates?.length) {
+            console.error("No candidates in Gemini response");
+            return res.status(502).json({
+                error: "Model service temporarily unavailable",
+            });
+        }
+
+        const raw = data.candidates[0]?.content?.parts?.[0]?.text ?? "";
+
+        // Clean up potential markdown wrapping
+        let cleaned = raw
+            .replace(/```json\s*/g, "")
+            .replace(/```\s*/g, "")
+            .trim();
+
+        // Parse JSON
+        let parsed;
+        try {
+            parsed = JSON.parse(cleaned);
+        } catch (parseError) {
+            console.error("Failed to parse JSON from model:", parseError);
+            console.error("Raw output:", raw);
+            return res.status(500).json({ error: "Model returned invalid JSON" });
+        }
+
+        // Validate against schema
+        if (!validateResponse(parsed)) {
+            console.error("Validation failed for model output");
+            return res.status(500).json({ error: "Model output failed validation" });
+        }
+
+        // ✅ RETURN VALIDATED RESULT
+        return res.status(200).json(parsed);
+
+    } catch (err) {
+        console.error("Unexpected error in formatWorkoutText:", err);
+
+        let message = "An unexpected error occurred";
+        const text = typeof err.message === "string" ? err.message : "";
+
+        if (text.includes("fetch failed") || text.includes("ECONNREFUSED")) {
+            message = "Network error connecting to model service";
+        }
+
+        return res.status(500).json({
+            error: message,
+        });
+    }
+}
