@@ -395,7 +395,7 @@ export default async function handler(req, res) {
       "distance": 50,
       "stroke": "free"|"back"|"breast"|"fly"|"im"|"choice"|"mixed"|null,
       "mode": "swim"|"kick"|"pull"|"drill"|"scull"|"technique"|null,
-      "interval": {"kind": "sendoff"|"rest"|"none", "seconds": 50|null},
+      "interval": {"kind": "sendoff"|"rest"|"none", "seconds": 50|null},  // ALWAYS an object, never null
       "pattern": {"type": "evenPace"|"descend"|"build"|"other", "start": 1, "end": 4, "raw": "descend 1–4"}|null,
       "equipment": ["fins"]|[],
       "notes": "text"
@@ -410,11 +410,17 @@ Sections: WU/Warmup→warmup, Preset/Pre-Set→preset, Main→main, Post-Set→p
 Reps: "8x50"→8,50 | "400"→1,400
 Strokes: free/fr→free, back/bk→back, breast/br→breast, fly→fly, IM→im, choice→choice, multiple→mixed
 Modes: kick/pull/drill/swim/scull/technique (if mentioned)
-Intervals: "@1:10"→sendoff,70 | ":50"→sendoff,50 | "15 rest"→rest,15 | none→none,null (normalize 1.10→1:10)
+Intervals: "@1:10"→sendoff,70 | ":50"→sendoff,50 | "15 rest"→rest,15 | NO interval→none,null (always an object, never null)
 Patterns: descend/build→type+range | "easy/aerobic/fast"→other | none→null
 Equipment: fins, paddles, snorkel, buoy, band, parachute (array)
 Rounds: "3x through 4x50"→reps:12 + notes:"3 rounds"
-Issues: No reps/distance + not header → add to issues (lineNumber, lineText, reason)
+
+**IGNORE (don't add to issues):**
+- Workout titles/dates (e.g., "Tuesday AM Recovery", "Post-Meet Reset")
+- Default interval declarations (e.g., "Default interval: 1:30 per 100")
+- General notes/metadata that aren't sets
+
+Issues: ONLY flag lines that LOOK LIKE sets but can't be parsed (unclear reps/distance in set-like format)
 
 **EXAMPLE:**
 Input:
@@ -499,6 +505,7 @@ Output ONLY JSON. No markdown, no extra text.`;
         // Validate against schema
         if (!validateResponse(parsed)) {
             console.error("Validation failed for model output");
+            console.error("Parsed response:", JSON.stringify(parsed, null, 2));
             return res.status(500).json({ error: "Model output failed validation" });
         }
 
