@@ -28,6 +28,50 @@ export default async function handler(req, res) {
   const MODEL = "models/gemini-2.5-flash";
   const ENDPOINT = `https://generativelanguage.googleapis.com/v1/${MODEL}:generateContent`;
 
+  // ---------------------------------------------------------
+  // TYPE DEFINITIONS (Reference for Response Shape)
+  // ---------------------------------------------------------
+  // type RecoveryExercise = {
+  //   id: string;
+  //   name: string;
+  //   category: "STRETCH" | "MOBILITY" | "ROLLING";
+  //   muscleGroups: string[];   // human-readable labels: ["Lats", "Mid back"]
+  //   bodyRegions: string[];    // machine keys: ["LATS", "MID_BACK", "SHOULDERS", "LEGS", "HIPS", "CORE", "SPINE"]
+  //   durationSec: number;
+  //   sets: number | null;
+  //   reps: number | null;
+  //   sideSpecific: boolean;
+  //   description: string;
+  //   coachingCues: string[];
+  // };
+  //
+  // type RecoveryBlock = {
+  //   id: string;
+  //   type: "STRETCH" | "MOBILITY" | "ROLLING";
+  //   title: string;
+  //   description: string;
+  //   estimatedDurationSec: number;
+  //   items: RecoveryExercise[];
+  // };
+  //
+  // type RecoveryOtherStrategy = {
+  //   id: string;
+  //   type: "NUTRITION" | "HYDRATION" | "SLEEP" | "GENERAL";
+  //   title: string;
+  //   summary: string;
+  // };
+  //
+  // type RecoveryPlan = {
+  //   sessionSummary: {
+  //     estimatedDurationSec: number;
+  //     exerciseCount: number;
+  //     focusRegions: string[];   // ["Low back", "Shins", "Mid back"]
+  //     intensityTag: string;     // e.g. "Light recovery", "Moderate recovery"
+  //   };
+  //   blocks: RecoveryBlock[];
+  //   otherStrategies: RecoveryOtherStrategy[];
+  // };
+
   // Simple diagnostics route
   if (req.method === "GET") {
     return res.status(200).json({
@@ -48,7 +92,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { text } = req.body || {};
+    const { text, soreness } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "No text provided" });
     }
@@ -102,36 +146,8 @@ Also:
 - practiceTag should be a short phrase summarizing the workout type, like:
   "sprint set", "threshold free", "aerobic IM", "kick-heavy", "pull-heavy", "race-pace", etc.
 
-- recoverySuggestions must be a MULTI-LINE text block describing individual stretches and recovery items.
-  Each line must describe exactly ONE stretch or recovery item, using this format:
-
-  Stretch Name (Main Area, Secondary Area): Short how-to sentence. • dose
-
-  Where:
-    - Stretch Name = concise name like "Doorway Chest Stretch"
-    - Main/Secondary Area = 1–3 body areas, e.g. "Pectorals, Shoulders"
-    - Short how-to sentence = 1 short sentence on how to do the stretch
-    - dose = how many sets/seconds, like "2×30s", "3×20s per side", "60s easy swim"
-
-  Examples of valid lines:
-    Doorway Chest Stretch (Pectorals, Shoulders): Stand in a doorway, forearms on the frame at shoulder height, gently lean chest forward. • 2×30s
-    Overhead Lat Stretch (Lats, Obliques): Reach one arm overhead and gently bend to the opposite side. • 2×30s per side
-    Child’s Pose (Back, Hips): Kneel on your heels, fold forward with arms extended, breathe slowly. • 2×45s
-
-  - You are NOT limited by word count. Include as many lines as are useful (usually 4–7).
-  - Prioritize body areas that are most stressed by this workout:
-      * shoulders and lats for freestyle/backstroke
-      * hips and adductors for breaststroke
-      * shoulders/chest/core for butterfly
-      * hips/legs for kick-heavy sets
-  - It’s okay if you occasionally include a short cool-down swim as one "stretch line" following the same format.
-
 - aiTip should be a short 1–2 sentence coaching insight about recovery or how to approach the next similar session.
-  It should be separate from recoverySuggestions.
-
-- aiSummary should be a short (1–2 sentence) summary of this workout
-  as if explaining to a competitive swimmer what this set focuses on.
-  Keep it concise and motivational.
+- aiSummary should be a short (1–2 sentence) summary of this workout.
 
 - intensity_summary:
   - Classify yardage into 5 intensity buckets:
@@ -147,37 +163,76 @@ Also:
 - insights:
   - difficulty_score: 1-10 based on volume and intensity.
   - strain_category: "Low", "Medium", or "High".
-  - focus_tags: 2-4 tags describing the session (e.g. "Threshold", "Breaststroke", "Kick heavy").
-  - highlight_bullets: 3-4 short, interesting bullet points about the practice. Examples:
-    * "You did 1,800 yards of freestyle."
-    * "Largest continuous swim: 800 yards."
-    * "Breaststroke made up 35% of total yardage."
+  - focus_tags: 2-4 tags describing the session.
+  - highlight_bullets: 3-4 short, interesting bullet points about the practice.
 
-- recovery_plan:
-  Design a personalized recovery plan for this specific practice based on:
-    * Intensity and strain level
-    * Focus areas (strokes, body regions emphasized)
-    * Distance vs sprint work
+- recoveryPlan:
+  Generate a JSON object called "recoveryPlan" that matches the schema below.
   
-  Return a structured array of recovery tasks with THREE timing buckets:
-    * immediate: Right after practice (0-2 hours)
-    * today: Later in the day (evening, before bed)
-    * tomorrow: Next session or next day
+  CONTEXT:
+  - Use the calculated totalYards, strokePercentages, and intensity_summary.
+  - Soreness reported by user: ${soreness ? JSON.stringify(soreness) : "None reported."}
   
-  For each task, provide:
-    * id: unique string identifier (e.g. "task_1", "task_2")
-    * text: Short, actionable instruction (e.g. "Doorway chest stretch 2×30s per side")
-    * bucket: one of "immediate", "today", "tomorrow"
-    * body_region: one of "shoulders", "legs", "hips", "core", "full-body"
-    * kind: one of "stretch", "mobility", "easy_swim", "activation", "lifestyle"
-    * include_in_quick: boolean (true = include in a short 10-15 min recovery routine)
+  STRATEGY:
+  1. If yards or effort is high -> bias toward "Moderate recovery" with slightly more time and exercises.
+  2. If it's a short or easy practice -> "Light recovery" with fewer total minutes.
+  3. If there's no practice but soreness is logged -> gentle "Reset" session (mostly mobility + light stretches).
+  4. Focus Regions:
+     - FR/BK heavy -> shoulders, lats, hip flexors.
+     - BR heavy -> groin, knees, low back.
+     - Kick heavy -> shins, quads, hip flexors.
+     - Pull heavy -> lats, upper back, shoulders.
+     - Prioritize any reported soreness regions.
   
-  Guidelines:
-    * Immediate tasks: 3-5 quick stretches/cooldown activities
-    * Today tasks: 2-3 recovery activities (foam rolling, light cardio, nutrition)
-    * Tomorrow tasks: 1-2 activation or preparation items
-    * Mark 4-6 total tasks as include_in_quick=true for a streamlined routine
-    * Focus on body regions most stressed in this practice
+  STRUCTURE:
+  - blocks:
+    - "warmup-mobility": 1-2 MOBILITY moves (dynamic).
+    - "targeted-stretch": 4-6 STRETCH moves (static holds).
+    - "rolling": 1-2 ROLLING moves (optional).
+  - otherStrategies:
+    - Hydration, nutrition, sleep, light movement.
+  
+  SCHEMA:
+  "recoveryPlan": {
+    "sessionSummary": {
+      "estimatedDurationSec": number, // 240-600 seconds (4-10 mins)
+      "exerciseCount": number,
+      "focusRegions": [string], // e.g. ["Low back", "Shins"]
+      "intensityTag": string // "Light recovery", "Moderate recovery", "Deep recovery"
+    },
+    "blocks": [
+      {
+        "id": string, // "warmup-mobility", "targeted-stretch", "rolling"
+        "type": string, // "MOBILITY", "STRETCH", "ROLLING"
+        "title": string,
+        "description": string,
+        "estimatedDurationSec": number,
+        "items": [
+          {
+            "id": string, // slug, e.g. "cat-cow"
+            "name": string, // Display name
+            "category": string, // "MOBILITY", "STRETCH", "ROLLING"
+            "muscleGroups": [string], // Human readable: ["Lats", "Mid back"]
+            "bodyRegions": [string], // Keys: ["LATS", "MID_BACK", "SHOULDERS", "LEGS", "HIPS", "CORE", "SPINE"]
+            "durationSec": number, // usually 30-60
+            "sets": number | null, // usually 1-2
+            "reps": number | null, // null if time-based
+            "sideSpecific": boolean, // true if needs to be done on both sides
+            "description": string, // Short how-to
+            "coachingCues": [string] // 1-2 tips
+          }
+        ]
+      }
+    ],
+    "otherStrategies": [
+      {
+        "id": string,
+        "type": string, // "NUTRITION", "HYDRATION", "SLEEP", "GENERAL"
+        "title": string,
+        "summary": string
+      }
+    ]
+  }
 
 Identify strokes by keywords:
   * Freestyle: "free", "fr", "aerobic", "descend", "build" (if unlabeled, assume free)
@@ -192,55 +247,14 @@ Identify strokes by keywords:
   * Choice: "choice", "any stroke"
 
 Return JSON in this exact structure:
-  "intensity_summary": {
-    "easy_yards": number,
-    "aerobic_yards": number,
-    "threshold_yards": number,
-    "race_yards": number,
-    "sprint_yards": number,
-    "work_yards": number,
-    "recovery_yards": number
-  },
-  "insights": {
-    "difficulty_score": number, // 1-10
-    "strain_category": string, // "Low", "Medium", "High"
-    "focus_tags": [string], // e.g. ["Threshold", "Breaststroke"]
-    "highlight_bullets": [string] // 3-4 short sentences
-  },
-  "recovery_plan": {
-    "tasks": [
-      {
-        "id": string, // e.g. "task_1"
-        "text": string, // actionable instruction
-        "bucket": string, // "immediate" | "today" | "tomorrow"
-        "body_region": string, // "shoulders" | "legs" | "hips" | "core" | "full-body"
-        "kind": string, // "stretch" | "mobility" | "easy_swim" | "activation" | "lifestyle"
-        "include_in_quick": boolean
-      }
-    ]
-  },
+{
+  "intensity_summary": { ... },
+  "insights": { ... },
+  "recoveryPlan": { ... },
   "totalYards": number,
-  "sectionYards": {
-    "Warmup": number,
-    "Preset": number,
-    "Main Set": number,
-    "Post-Set": number,
-    "Cooldown": number
-  },
-  "strokePercentages": {
-    "Freestyle": number,
-    "Backstroke": number,
-    "Breaststroke": number,
-    "Butterfly": number,
-    "Kick": number,
-    "Drill": number,
-    "Drill/Swim": number,
-    "Pull": number,
-    "Choice": number,
-    "IM": number
-  },
+  "sectionYards": { ... },
+  "strokePercentages": { ... },
   "practiceTag": string,
-  "recoverySuggestions": string,
   "aiTip": string,
   "aiSummary": string
 }
@@ -300,22 +314,43 @@ ${text}
       merged.aiSummary = "No summary available.";
     }
 
-    // Ensure recovery_plan exists and is well-formed
-    if (!merged.recovery_plan || typeof merged.recovery_plan !== 'object') {
-      merged.recovery_plan = { tasks: [] };
-    } else if (!Array.isArray(merged.recovery_plan.tasks)) {
-      merged.recovery_plan.tasks = [];
+    // Ensure recoveryPlan exists and is well-formed
+    if (!merged.recoveryPlan || typeof merged.recoveryPlan !== 'object') {
+      merged.recoveryPlan = {
+        sessionSummary: {
+          estimatedDurationSec: 0,
+          exerciseCount: 0,
+          focusRegions: [],
+          intensityTag: "Light recovery"
+        },
+        blocks: [],
+        otherStrategies: []
+      };
     } else {
-      // Validate each task has required fields
-      merged.recovery_plan.tasks = merged.recovery_plan.tasks.filter(task => {
-        return task &&
-          typeof task.id === 'string' &&
-          typeof task.text === 'string' &&
-          typeof task.bucket === 'string' &&
-          typeof task.body_region === 'string' &&
-          typeof task.kind === 'string' &&
-          typeof task.include_in_quick === 'boolean';
-      });
+      // Validate sessionSummary
+      if (!merged.recoveryPlan.sessionSummary) {
+        merged.recoveryPlan.sessionSummary = {
+          estimatedDurationSec: 0,
+          exerciseCount: 0,
+          focusRegions: [],
+          intensityTag: "Light recovery"
+        };
+      }
+
+      // Validate blocks
+      if (!Array.isArray(merged.recoveryPlan.blocks)) {
+        merged.recoveryPlan.blocks = [];
+      } else {
+        // Filter out invalid blocks
+        merged.recoveryPlan.blocks = merged.recoveryPlan.blocks.filter(block =>
+          block && typeof block.id === 'string' && Array.isArray(block.items)
+        );
+      }
+
+      // Validate otherStrategies
+      if (!Array.isArray(merged.recoveryPlan.otherStrategies)) {
+        merged.recoveryPlan.otherStrategies = [];
+      }
     }
 
     // ✅ RETURN FINAL RESULT
