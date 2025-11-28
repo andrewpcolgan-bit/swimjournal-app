@@ -183,6 +183,11 @@ Also:
      - Kick heavy -> shins, quads, hip flexors.
      - Pull heavy -> lats, upper back, shoulders.
      - Prioritize any reported soreness regions.
+  5. Sets Strategy:
+     - Assume 2 sets for every muscle group as the baseline.
+     - Rank 2-4 muscle regions that need EXTRA work (assign 3-4 sets) because of high soreness or practice load.
+     - Call out any regions that can stay LIGHT (1 set) because they were low priority / fresh.
+     - Document this logic in a "setStrategy" array and mirror those numbers inside each exercise's "sets" field.
   
   STRUCTURE:
   - blocks:
@@ -200,6 +205,13 @@ Also:
       "focusRegions": [string], // e.g. ["Low back", "Shins"]
       "intensityTag": string // "Light recovery", "Moderate recovery", "Deep recovery"
     },
+    "setStrategy": [
+      {
+        "muscleGroup": string,      // e.g. "Lats"
+        "recommendedSets": number,  // 1-4 (base 2)
+        "reason": string            // short explanation
+      }
+    ],
     "blocks": [
       {
         "id": string, // "warmup-mobility", "targeted-stretch", "rolling"
@@ -343,6 +355,7 @@ ${text}
           focusRegions: [],
           intensityTag: "Light recovery"
         },
+        setStrategy: [],
         blocks: [],
         otherStrategies: []
       };
@@ -357,14 +370,32 @@ ${text}
         };
       }
 
+      // Validate setStrategy
+      if (!Array.isArray(merged.recoveryPlan.setStrategy)) {
+        merged.recoveryPlan.setStrategy = [];
+      }
+
       // Validate blocks
       if (!Array.isArray(merged.recoveryPlan.blocks)) {
         merged.recoveryPlan.blocks = [];
       } else {
-        // Filter out invalid blocks
-        merged.recoveryPlan.blocks = merged.recoveryPlan.blocks.filter(block =>
-          block && typeof block.id === 'string' && Array.isArray(block.items)
-        );
+        // Filter out invalid blocks and normalize items
+        merged.recoveryPlan.blocks = merged.recoveryPlan.blocks
+          .filter(
+            (block) => block && typeof block.id === "string" && Array.isArray(block.items)
+          )
+          .map((block) => ({
+            ...block,
+            items: block.items.map((item) => {
+              const normalizedSets =
+                typeof item?.sets === "number" && item.sets > 0 ? item.sets : 2;
+              return {
+                ...item,
+                sets: normalizedSets,
+                coachingCues: Array.isArray(item?.coachingCues) ? item.coachingCues : [],
+              };
+            }),
+          }));
       }
 
       // Validate otherStrategies
