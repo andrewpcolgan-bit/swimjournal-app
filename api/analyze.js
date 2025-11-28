@@ -186,8 +186,8 @@ Also:
   5. Sets Strategy:
      - Assume 2 sets for every muscle group as the baseline.
      - Rank 2-4 muscle regions that need EXTRA work (assign 3-4 sets) because of high soreness or practice load.
-     - Call out any regions that can stay LIGHT (1 set) because they were low priority / fresh.
-     - Document this logic in a "setStrategy" array and mirror those numbers inside each exercise's "sets" field.
+     - Call out any regions that can stay LIGHT (still 2 sets, but mention they’re maintenance).
+     - Document this logic in a "setStrategy" array and mirror those numbers inside each exercise's "sets" field (never output less than 2).
   
   STRUCTURE:
   - blocks:
@@ -387,8 +387,9 @@ ${text}
           .map((block) => ({
             ...block,
             items: block.items.map((item) => {
-              const normalizedSets =
+              const rawSets =
                 typeof item?.sets === "number" && item.sets > 0 ? item.sets : 2;
+              const normalizedSets = Math.max(2, Math.round(rawSets));
               return {
                 ...item,
                 sets: normalizedSets,
