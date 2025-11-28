@@ -286,12 +286,32 @@ ${text}
       });
     }
 
-    const raw = data.candidates[0]?.content?.parts?.[0]?.text ?? "";
+    let raw = data.candidates[0]?.content?.parts?.[0]?.text ?? "";
+    
+    // Strip markdown code blocks if present (Gemini often wraps JSON in ```json ... ```)
+    raw = raw.trim();
+    if (raw.startsWith("```json")) {
+      raw = raw.slice(7); // Remove ```json
+    } else if (raw.startsWith("```")) {
+      raw = raw.slice(3); // Remove ```
+    }
+    if (raw.endsWith("```")) {
+      raw = raw.slice(0, -3); // Remove trailing ```
+    }
+    raw = raw.trim();
+    
+    // Also handle case where it starts with just "json" label
+    if (raw.toLowerCase().startsWith("json\n") || raw.toLowerCase().startsWith("json\r")) {
+      raw = raw.slice(4).trim();
+    }
+    
     let parsed;
     try {
       parsed = JSON.parse(raw);
-    } catch {
-      parsed = { rawOutput: raw };
+    } catch (parseErr) {
+      console.error("JSON Parse Error:", parseErr.message);
+      console.error("Raw content (first 500 chars):", raw.substring(0, 500));
+      parsed = { rawOutput: raw, parseError: parseErr.message };
     }
 
     const merged =
