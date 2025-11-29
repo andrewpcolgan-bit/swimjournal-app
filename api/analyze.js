@@ -35,14 +35,18 @@ export default async function handler(req, res) {
   //   id: string;
   //   name: string;
   //   category: "STRETCH" | "MOBILITY" | "ROLLING";
-  //   muscleGroups: string[];   // human-readable labels: ["Lats", "Mid back"]
-  //   bodyRegions: string[];    // machine keys: ["LATS", "MID_BACK", "SHOULDERS", "LEGS", "HIPS", "CORE", "SPINE"]
+  //   muscleGroups: string[];   // MuscleRegion keys (e.g. "shoulders", "lats", "lowBack") - MUST match app taxonomy
+  //   bodyRegions: string[];    // DEPRECATED - kept for backward compat, use muscleGroups instead
   //   durationSec: number;
   //   sets: number | null;
   //   reps: number | null;
   //   sideSpecific: boolean;
   //   description: string;
   //   coachingCues: string[];
+  //   difficulty: "EASY" | "MEDIUM" | "HARD";
+  //   equipment: "NONE" | "WALL" | "BAND" | "FOAM_ROLLER" | "BALL";
+  //   role: "WARM_UP" | "TARGETED" | "COOL_DOWN" | "GLOBAL";
+  //   shortBlurb: string;  // 1-sentence "why this helps swimmers" summary
   // };
   //
   // type RecoveryBlock = {
@@ -92,7 +96,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { text, soreness } = req.body || {};
+    const { text, soreness, muscleCatalog, stretchCatalog } = req.body || {};
     if (!text || !text.trim()) {
       return res.status(400).json({ error: "No text provided" });
     }
@@ -172,22 +176,30 @@ Also:
   CONTEXT:
   - Use the calculated totalYards, strokePercentages, and intensity_summary.
   - Soreness reported by user: ${soreness ? JSON.stringify(soreness) : "None reported."}
+  - Valid muscle groups (MUST USE THESE EXACT IDs): ${muscleCatalog ? JSON.stringify(muscleCatalog.map(m => m.id)) : '["neckTraps","shoulders","chest","biceps","triceps","forearms","abs","obliques","midBack","lowBack","lats","glutes","hips","groin","hamstrings","quads","calves","shins"]'}
+  ${stretchCatalog ? `- Existing stretches (prefer reusing these names when appropriate): ${JSON.stringify(stretchCatalog.slice(0, 30).map(s => ({ name: s.name, muscles: s.muscleGroups })))}` : ''}
   
   STRATEGY:
   1. If yards or effort is high -> bias toward "Moderate recovery" with slightly more time and exercises.
   2. If it's a short or easy practice -> "Light recovery" with fewer total minutes.
   3. If there's no practice but soreness is logged -> gentle "Reset" session (mostly mobility + light stretches).
   4. Focus Regions:
-     - FR/BK heavy -> shoulders, lats, hip flexors.
-     - BR heavy -> groin, knees, low back.
-     - Kick heavy -> shins, quads, hip flexors.
-     - Pull heavy -> lats, upper back, shoulders.
+     - FR/BK heavy -> shoulders, lats, hips.
+     - BR heavy -> groin, glutes, lowBack.
+     - Kick heavy -> shins, quads, hips, calves.
+     - Pull heavy -> lats, midBack, shoulders, triceps.
      - Prioritize any reported soreness regions.
   5. Sets Strategy:
      - Assume 2 sets for every muscle group as the baseline.
      - Rank 2-4 muscle regions that need EXTRA work (assign 3-4 sets) because of high soreness or practice load.
-     - Call out any regions that can stay LIGHT (still 2 sets, but mention they’re maintenance).
+     - Call out any regions that can stay LIGHT (still 2 sets, but mention they're maintenance).
      - Document this logic in a "setStrategy" array and mirror those numbers inside each exercise's "sets" field (never output less than 2).
+  6. SAFETY CONSTRAINTS (CRITICAL):
+     - NO ballistic/bouncing movements at end range
+     - NO advanced loaded mobility or aggressive stretching
+     - AVOID anything likely to aggravate shoulders, knees, or low back
+     - Emphasize gentle, swimmer-appropriate movements only
+     - All stretches should be static holds or controlled dynamic movements
   
   STRUCTURE:
   - blocks:
@@ -224,14 +236,18 @@ Also:
             "id": string, // slug, e.g. "cat-cow"
             "name": string, // Display name
             "category": string, // "MOBILITY", "STRETCH", "ROLLING"
-            "muscleGroups": [string], // Human readable: ["Lats", "Mid back"]
-            "bodyRegions": [string], // Keys: ["LATS", "MID_BACK", "SHOULDERS", "LEGS", "HIPS", "CORE", "SPINE"]
+            "muscleGroups": [string], // MUST use exact MuscleRegion IDs from catalog (e.g. ["lats", "midBack"])
+            "bodyRegions": [string], // DEPRECATED - kept for backward compat, can be empty []
             "durationSec": number, // usually 30-60
-            "sets": number | null, // usually 1-2
+            "sets": number | null, // usually 2-4 (never less than 2)
             "reps": number | null, // null if time-based
             "sideSpecific": boolean, // true if needs to be done on both sides
-            "description": string, // Short how-to
-            "coachingCues": [string] // 1-2 tips
+            "description": string, // Short how-to (2-3 sentences)
+            "coachingCues": [string], // 1-2 tips
+            "difficulty": string, // "EASY" | "MEDIUM" | "HARD"
+            "equipment": string, // "NONE" | "WALL" | "BAND" | "FOAM_ROLLER" | "BALL"
+            "role": string, // "WARM_UP" | "TARGETED" | "COOL_DOWN" | "GLOBAL"
+            "shortBlurb": string // 1 sentence: why this helps swimmers
           }
         ]
       }
